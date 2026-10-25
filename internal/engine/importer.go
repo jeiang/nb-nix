@@ -29,6 +29,14 @@ func Import(w io.Writer, snap *Snapshot, server, version string) error {
 				// also add members, so import leaves membership undeclared.
 				delete(d, "peers")
 			}
+			if k.Name == "users" {
+				local, _, _ := strings.Cut(str(d["email"]), "@")
+				if str(d["role"]) == "owner" {
+					delete(d, "role") // nb-nix cannot change the owner's role; ownership moves in the dashboard
+				}
+				attrs(out, k.Name)[slugs.slug(local)] = d
+				continue
+			}
 			switch {
 			case k.Name == "account":
 				out["account"] = Doc{"settings": d["settings"]}

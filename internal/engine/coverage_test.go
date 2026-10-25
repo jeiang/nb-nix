@@ -22,6 +22,7 @@ var responseTypes = map[string]reflect.Type{
 	"setup_keys":        reflect.TypeFor[api.SetupKey](),
 	"services":          reflect.TypeFor[api.Service](),
 	"peers":             reflect.TypeFor[api.Peer](),
+	"users":             reflect.TypeFor[api.User](),
 	"account":           reflect.TypeFor[api.Account](),
 }
 

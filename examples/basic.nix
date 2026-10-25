@@ -95,6 +95,12 @@ in {
       access_restrictions.crowdsec_mode = "enforce";
     };
 
+    users.alice = {
+      email = "alice@example.com";
+      role = "user";
+      auto_groups = [nb.groups.admins.name];
+    };
+
     peers.gateway = {
       ip = "100.80.0.1";
       ssh_enabled = true;

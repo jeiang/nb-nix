@@ -84,6 +84,9 @@ func fetchKind(ctx context.Context, c *nbapi.Client, s *Snapshot, k *Kind) ([]*L
 		}
 		out := make([]*LiveObj, 0, len(docs))
 		for _, d := range docs {
+			if k.Skip != nil && k.Skip(d) {
+				continue
+			}
 			out = append(out, newLive(str(d["id"]), "", "", d))
 		}
 		return out, nil
@@ -137,6 +140,9 @@ func (s *Snapshot) name(k *Kind, o *LiveObj) error {
 	}
 	if k.Parent != "" {
 		named["network"] = o.ParentName
+	}
+	for _, key := range k.Keep {
+		named[key] = o.Raw[key]
 	}
 	o.Named = named
 	o.Key = k.Key(named)

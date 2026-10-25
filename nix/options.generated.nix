@@ -330,4 +330,11 @@ in rec {
       skip_tls_verify = opt (t.bool) "Skip TLS certificate verification for this backend";
     };
   };
+  UserRequest = {
+    options = {
+      auto_groups = opt (t.listOf (t.str)) "Group IDs to auto-assign to peers registered by this user";
+      is_blocked = opt (t.bool) "If set to true then user is blocked and can't use the system";
+      role = opt (t.str) "User's NetBird account role";
+    };
+  };
 }

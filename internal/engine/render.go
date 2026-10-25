@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-var actionMark = map[string]string{"create": "+", "update": "~", "replace": "-/+", "delete": "-"}
+var actionMark = map[string]string{"create": "+", "update": "~", "replace": "-/+", "delete": "-", "approve": "*"}
 
 // Render writes a readable plan. Secret file paths are shown, never values.
 func (p *Plan) Render(w io.Writer) {
@@ -47,8 +47,8 @@ func (p *Plan) Render(w io.Writer) {
 		}
 	}
 	c := p.Counts()
-	fmt.Fprintf(w, "\nPlan: %d to create, %d to update, %d to replace, %d to delete.\n",
-		c["create"], c["update"], c["replace"], c["delete"])
+	fmt.Fprintf(w, "\nPlan: %d to create, %d to update, %d to replace, %d to delete, %d to approve.\n",
+		c["create"], c["update"], c["replace"], c["delete"], c["approve"])
 	if r := p.Risky(); len(r) > 0 {
 		fmt.Fprintf(w, "%d risky change(s); apply needs --allow-risky.\n", len(r))
 	}

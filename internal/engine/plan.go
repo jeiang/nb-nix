@@ -146,7 +146,17 @@ func planKind(k *Kind, snap *Snapshot, want *Desired) (ops, deletes []Op, unmana
 		case len(matches) == 0:
 			ops = append(ops, Op{Kind: k.Name, Key: key, Action: "create", Body: d})
 		default:
-			if op, ok := updateOp(k, matches[0], d); ok {
+			o := matches[0]
+			if pending, _ := o.Raw["pending_approval"].(bool); pending && k.Name == "users" {
+				ops = append(ops, Op{Kind: k.Name, Key: key, Action: "approve", LiveID: o.ID, Hash: o.Hash})
+				// Approval unblocks the user; do not block it again unless declared.
+				d = overlay(Doc{"is_blocked": false}, d).(map[string]any)
+			}
+			op, ok, checkErrs := updateOp(k, o, d)
+			for _, e := range checkErrs {
+				errs = append(errs, fmt.Sprintf("%s %q: %s", k.Name, key, e))
+			}
+			if ok {
 				ops = append(ops, op)
 			}
 		}
@@ -155,7 +165,7 @@ func planKind(k *Kind, snap *Snapshot, want *Desired) (ops, deletes []Op, unmana
 			errs = append(errs, fmt.Sprintf("setup_keys %q: creating a key needs a sink (the value is shown only once)", key))
 		}
 	}
-	if k.Singleton || k.NoDelete {
+	if k.Singleton || k.Quiet {
 		return ops, nil, nil, errs
 	}
 	deletedParents := map[string]bool{}
@@ -176,7 +186,7 @@ func planKind(k *Kind, snap *Snapshot, want *Desired) (ops, deletes []Op, unmana
 			continue
 		}
 		for _, o := range live[key] {
-			protected := k.Protected != nil && k.Protected(o.Raw)
+			protected := k.NoDelete || (k.Protected != nil && k.Protected(o.Raw))
 			unmanaged = append(unmanaged, Unmanaged{Kind: k.Name, Key: key, Protected: protected})
 			if !want.Prune[k.Name] || protected || deletedParents[o.ParentID] {
 				continue
@@ -270,12 +280,18 @@ func walkObjects(v any, segs []string, fn func(map[string]any)) (any, bool) {
 	return out, found
 }
 
-func updateOp(k *Kind, o *LiveObj, want Doc) (Op, bool) {
+// updateOp compares a live object with its declaration. It returns the update
+// (if anything differs) and reasons the update cannot be made.
+func updateOp(k *Kind, o *LiveObj, want Doc) (Op, bool, []string) {
 	liveView := compareView(k, o.Named)
 	merged := overlay(liveView, compareView(k, want)).(map[string]any)
 	changes := diff("", canon(k, liveView), canon(k, merged))
 	if len(changes) == 0 {
-		return Op{}, false
+		return Op{}, false, nil
+	}
+	var errs []string
+	if k.Check != nil {
+		errs = k.Check(o.Raw, liveView, merged)
 	}
 	op := Op{
 		Kind: k.Name, Key: o.Key, Action: "update", LiveID: o.ID, Parent: o.ParentID, Hash: o.Hash,
@@ -299,7 +315,7 @@ func updateOp(k *Kind, o *LiveObj, want Doc) (Op, bool) {
 			op.SendSecrets = true
 		}
 	}
-	return op, true
+	return op, true, errs
 }
 
 // needsSecret reports whether an update must carry the secret: its auth method

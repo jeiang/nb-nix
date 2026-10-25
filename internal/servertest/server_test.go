@@ -221,6 +221,35 @@ func TestPlanApplyCycle(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("users are adopted by email", func(t *testing.T) {
+		if err := c.Do(ctx, "POST", "/users", map[string]any{
+			"email": "member@nb-nix.test", "name": "Member", "role": "user", "auto_groups": []string{}, "is_service_user": false,
+		}, nil); err != nil {
+			t.Fatal(err)
+		}
+		users := `{"users": [{"email": "member@nb-nix.test", "auto_groups": ["admins", "servers"]}]}`
+		p := plan(t, c, users)
+		if len(p.Ops) != 1 || p.Ops[0].Kind != "users" || p.Ops[0].Action != "update" {
+			t.Fatalf("want one user update, got:\n%s", describe(p))
+		}
+		if err := apply(t, c, p, false); err != nil {
+			t.Fatal(err)
+		}
+		requireNoChanges(t, c, users)
+		// The setup owner is the token's own user and the owner: role changes are refused at plan time.
+		want, err := engine.ParseDesired([]byte(`{"users": [{"email": "admin@nb-nix.test", "role": "user"}]}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		snap, err := engine.Fetch(ctx, c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := engine.MakePlan(snap, want); err == nil || !strings.Contains(err.Error(), "owner") {
+			t.Fatalf("want owner refusal, got %v", err)
+		}
+	})
 }
 
 func idList(v any) []any {

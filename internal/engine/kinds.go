@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"fmt"
 	"reflect"
 	"sort"
 	"strings"
@@ -52,11 +53,21 @@ type Kind struct {
 	Protected func(raw Doc) bool
 	// Risky returns reasons a change from old to new needs --allow-risky.
 	Risky func(old, new Doc) []string
+	// Check returns reasons an update from old to new cannot be made at all
+	// (the server would refuse it); they fail the plan.
+	Check func(raw, old, new Doc) []string
 	// CreateBody and UpdateBody build request bodies from a named document.
 	CreateBody func(d Doc) Doc
 	UpdateBody func(d Doc) Doc
-	NoCreate   bool
-	NoDelete   bool
+	// Skip drops live objects that this kind does not cover.
+	Skip func(raw Doc) bool
+	// Keep copies identifying response fields that the request type lacks
+	// into named documents. They are never sent.
+	Keep     []string
+	NoCreate bool
+	NoDelete bool
+	// Quiet kinds do not list undeclared live objects in plans.
+	Quiet bool
 }
 
 func collection(p string) func(string) string { return func(string) string { return p } }
@@ -301,6 +312,7 @@ var Kinds = []*Kind{
 		Key:        nameKey,
 		NoCreate:   true,
 		NoDelete:   true,
+		Quiet:      true,
 		Risky: func(old, new Doc) []string {
 			var r []string
 			if changed(old, new, "ip") || changed(old, new, "ipv6") {
@@ -308,6 +320,52 @@ var Kinds = []*Kind{
 			}
 			if boolAt(old, "approval_required") != boolAt(new, "approval_required") && boolAt(new, "approval_required") {
 				r = append(r, "requires approval for the peer")
+			}
+			return r
+		},
+	},
+	{
+		// Human users, adopted after their first login. Service users are not covered.
+		Name:        "users",
+		ReqType:     reflect.TypeFor[api.UserRequest](),
+		Collection:  collection("/users"),
+		Item:        item("/users"),
+		Refs:        []Ref{{Path: "auto_groups[]", Kind: "groups"}},
+		Keep:        []string{"email"},
+		DesiredOnly: []string{"email"},
+		Skip:        func(raw Doc) bool { b, _ := raw["is_service_user"].(bool); return b },
+		Key:         func(d Doc) string { return strings.ToLower(str(d["email"])) },
+		NoCreate:    true,
+		NoDelete:    true,
+		Check: func(raw, old, new Doc) []string {
+			var errs []string
+			roleOrBlock := changed(old, new, "role") || changed(old, new, "is_blocked")
+			if b, _ := raw["is_current"].(bool); b && roleOrBlock {
+				errs = append(errs, "the API token belongs to this user; the server refuses changes to its own role or blocked state")
+			}
+			if str(raw["role"]) == "owner" && roleOrBlock {
+				errs = append(errs, "the owner's role and blocked state can only be changed by the owner (dashboard)")
+			}
+			if str(raw["role"]) != "owner" && str(new["role"]) == "owner" {
+				errs = append(errs, "only the owner can transfer ownership (dashboard); leave role undeclared until then")
+			}
+			for _, g := range listOf(get(new, "auto_groups")) {
+				if g == "All" {
+					errs = append(errs, "the All group cannot be assigned to users")
+				}
+			}
+			return errs
+		},
+		Risky: func(old, new Doc) []string {
+			var r []string
+			if changed(old, new, "role") {
+				r = append(r, fmt.Sprintf("changes the role from %s to %s", str(old["role"]), str(new["role"])))
+			}
+			if !boolAt(old, "is_blocked") && boolAt(new, "is_blocked") {
+				r = append(r, "blocks the user")
+			}
+			if removed := setMinus(get(old, "auto_groups"), get(new, "auto_groups")); len(removed) > 0 {
+				r = append(r, "removes groups from the user and their peers: "+strings.Join(removed, ", "))
 			}
 			return r
 		},
@@ -343,6 +401,9 @@ var Kinds = []*Kind{
 			if !boolAt(old, "settings.groups_propagation_enabled") && boolAt(new, "settings.groups_propagation_enabled") {
 				r = append(r, "turning on groups propagation rewrites group memberships")
 			}
+			if changed(old, new, "settings.jwt_groups_enabled") {
+				r = append(r, "settings.jwt_groups_enabled turns the identity-provider group sync and the jwt_allow_groups login gate on or off")
+			}
 			return r
 		},
 	},
@@ -368,6 +429,16 @@ func KindByName(name string) *Kind {
 		}
 	}
 	return nil
+}
+
+// listOf returns the strings in a JSON list.
+func listOf(v any) []string {
+	l, _ := v.([]any)
+	out := make([]string, 0, len(l))
+	for _, e := range l {
+		out = append(out, str(e))
+	}
+	return out
 }
 
 func setMinus(a, b any) []string {

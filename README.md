@@ -22,6 +22,7 @@ you pass `--ignore-version`.
 | `setup_keys.<k>` | setup keys | name |
 | `services.<k>` | reverse-proxy services | name |
 | `peers.<k>` | existing peers (adopt only; peers cannot be created) | name |
+| `users.<k>` | existing human users: `role`, `auto_groups`, `is_blocked` (adopt only) | email |
 
 `<k>` is only a Nix handle; `name` defaults to it. Field names are the NetBird
 API's (see `nix/options.generated.nix`, generated from the API spec). Every
@@ -29,8 +30,8 @@ field that holds IDs in the API (groups, peers, posture checks, network
 resources, policy and service targets) takes **names** instead; nb-nix
 resolves them, including objects created in the same apply.
 
-Not managed: routes (use networks), users, identity providers, proxy tokens,
-DNS zones, cloud-only integrations.
+Not managed: routes (use networks), service users and tokens, identity
+providers, proxy tokens, DNS zones, cloud-only integrations.
 
 ## Use
 
@@ -68,14 +69,26 @@ are changes), `apply [--allow-risky] [--rotate KIND/NAME]`.
   NetBird API resets omitted fields on PUT. Lists you declare replace the live
   list; lists of objects (policy rules, nameservers, targets) merge element by
   element, so undeclared fields inside them are kept.
-- **Group members:** leave `peers` unset to keep live membership (setup keys
-  and JWT sync also assign peers). Declaring `peers` makes that list exact.
+- **Group members:** leave `peers` unset to keep live membership (setup keys,
+  user groups and JWT sync also assign peers). Declaring `peers` makes that
+  list exact. Do not declare `peers` on groups you assign through users.
+- **Users** exist only after their first login; declaring an email that has
+  not logged in fails the plan. A user's `auto_groups` are pushed to all of
+  the user's peers (groups propagation), additions and removals alike. A
+  declared user pending approval is approved. nb-nix refuses changes the
+  server would reject: the owner's role or blocked state, assigning `owner`,
+  the token's own role or blocked state, and the `All` group. Leave `role`
+  undeclared for the owner (`import` does); ownership moves in the dashboard.
+  Users are never deleted (that deletes their peers) and service users are
+  ignored.
 - **Stale plans are refused.** The plan stores a hash of every object it read;
   apply re-reads them and stops if any changed.
 - **Risky changes need `--allow-risky`:** deletes, setup key replacement,
   account `network_range`/`network_range_v6`/`dns_domain`, turning peer
-  approval off, turning groups propagation on, peer `ip`/`ipv6`, removing
-  peers from a declared membership, revoking a setup key.
+  approval off, turning groups propagation on, turning `jwt_groups_enabled`
+  on or off (it also switches the `jwt_allow_groups` login gate), peer
+  `ip`/`ipv6`, removing peers from a declared membership, revoking a setup
+  key, user role changes, blocking a user, removing groups from a user.
 - **Apply is not transactional.** It stops at the first failure and reports
   how many changes were made; the next plan starts from the new live state.
 - **Undeclared objects** are listed in every plan and left alone. Set

@@ -56,6 +56,8 @@ func pastTense(action string) string {
 		return "replaced"
 	case "delete":
 		return "deleted"
+	case "approve":
+		return "approved"
 	}
 	return action
 }
@@ -107,6 +109,8 @@ func (a *applier) do(ctx context.Context, op *Op) error {
 	switch op.Action {
 	case "delete":
 		return a.c.Do(ctx, "DELETE", k.Item(op.Parent, op.LiveID), nil, nil)
+	case "approve":
+		return a.c.Do(ctx, "POST", k.Item(op.Parent, op.LiveID)+"/approve", nil, nil)
 	case "create":
 		_, err := a.create(ctx, k, op)
 		return err

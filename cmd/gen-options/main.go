@@ -20,7 +20,7 @@ import (
 var roots = []string{
 	"AccountSettings", "DNSSettings", "PostureCheckUpdate", "GroupRequest", "NetworkRequest",
 	"NetworkResourceRequest", "NetworkRouterRequest", "NameserverGroupRequest", "PolicyCreate",
-	"CreateSetupKeyRequest", "ServiceRequest", "PeerRequest",
+	"CreateSetupKeyRequest", "ServiceRequest", "PeerRequest", "UserRequest",
 }
 
 // hidden properties cannot be declared: server-managed, read-only, or set elsewhere.

@@ -107,6 +107,19 @@ in {
     setup_keys = objects [gen.CreateSetupKeyRequest setupKeyExtra] "Setup keys.";
     services = objects gen.ServiceRequest "Reverse-proxy services.";
     peers = objects gen.PeerRequest "Existing peers to manage (peers cannot be created).";
+    users = lib.mkOption {
+      type = t.attrsOf (t.submodule [
+        gen.UserRequest
+        {
+          options.email = lib.mkOption {
+            type = t.str;
+            description = "Email of an existing (logged-in) user; identifies the user.";
+          };
+        }
+      ]);
+      default = {};
+      description = "Existing human users to manage (role, auto_groups, is_blocked). Users are never created or deleted; leave `role` undeclared for the owner.";
+    };
 
     desired = lib.mkOption {
       type = t.attrs;
@@ -137,6 +150,7 @@ in {
       setup_keys = lib.attrValues cfg.setup_keys;
       services = lib.attrValues cfg.services;
       peers = lib.attrValues cfg.peers;
+      users = lib.attrValues cfg.users;
     };
     desiredFile = pkgs.writeText "netbird-desired.json" (builtins.toJSON cfg.desired);
   };

@@ -28,6 +28,9 @@ func snapshot(t *testing.T, raws map[string]string) *Snapshot {
 				delete(d, "_parent")
 				delete(d, "_parent_name")
 			}
+			if k.Skip != nil && k.Skip(d) {
+				continue
+			}
 			s.Objects[k.Name] = append(s.Objects[k.Name], newLive(str(d["id"]), parentID, parentName, d))
 		}
 	}
