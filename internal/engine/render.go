@@ -46,6 +46,9 @@ func (p *Plan) Render(w io.Writer) {
 			fmt.Fprintf(w, "  %s: %s\n", k, strings.Join(byKind[k], ", "))
 		}
 	}
+	if len(p.Unchecked) > 0 {
+		fmt.Fprintf(w, "\nNot checked (this token may not read them): %s\n", strings.Join(p.Unchecked, ", "))
+	}
 	c := p.Counts()
 	fmt.Fprintf(w, "\nPlan: %d to create, %d to update, %d to replace, %d to delete, %d to approve.\n",
 		c["create"], c["update"], c["replace"], c["delete"], c["approve"])

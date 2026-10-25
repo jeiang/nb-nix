@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -322,6 +323,25 @@ func TestPlanApplyCycle(t *testing.T) {
 		}
 		if _, err := self.ServerVersion(ctx); err == nil {
 			t.Error("token used for the apply still works after it was replaced")
+		}
+
+		// An auditor may not list other service users' tokens: its plan
+		// reports them as unchecked instead of failing or creating them.
+		auditorFile := filepath.Join(t.TempDir(), "auditor")
+		withAuditor := strings.Replace(cfgFor(0), `"tokens": [`, fmt.Sprintf(
+			`"tokens": [{"user": "ci", "name": "ci", "sink": {"command": ["sh", "-c", "cat > %s"], "format": "raw"}}, `, auditorFile), 1)
+		withAuditor = strings.Replace(withAuditor, `"service_users": [`, `"service_users": [{"name": "ci", "role": "auditor"}, `, 1)
+		p = plan(t, c, withAuditor)
+		if err := apply(t, c, p, false); err != nil {
+			t.Fatal(err)
+		}
+		b, err := os.ReadFile(auditorFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p = plan(t, nbapi.New(os.Getenv("NB_TEST_MANAGEMENT_URL"), string(b)), withAuditor)
+		if len(p.Ops) != 0 || !slices.Contains(p.Unchecked, `tokens of "deployer"`) {
+			t.Fatalf("want no changes and deployer's tokens unchecked, got:\n%s\nunchecked: %v", describe(p), p.Unchecked)
 		}
 	})
 }

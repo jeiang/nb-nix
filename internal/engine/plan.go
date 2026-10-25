@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -99,11 +100,18 @@ type Plan struct {
 	Version   string      `json:"netbird_version"`
 	Ops       []Op        `json:"ops"`
 	Unmanaged []Unmanaged `json:"unmanaged"`
+	// Unchecked lists objects the token could not read, e.g. "tokens of ci".
+	Unchecked []string `json:"unchecked,omitempty"`
 }
 
 // MakePlan compares desired state with a live snapshot.
 func MakePlan(snap *Snapshot, want *Desired) (*Plan, error) {
 	p := &Plan{AccountID: snap.AccountID}
+	for _, k := range Kinds {
+		for _, parent := range snap.Unread[k.Name] {
+			p.Unchecked = append(p.Unchecked, k.Name+" of "+quote(parent))
+		}
+	}
 	if err := checkRefs(snap, want); err != nil {
 		return nil, err
 	}
@@ -140,6 +148,9 @@ func planKind(k *Kind, snap *Snapshot, want *Desired) (ops, deletes []Op, unmana
 			continue
 		}
 		declared[key] = true
+		if k.Parent != "" && slices.Contains(snap.Unread[k.Name], str(d[k.ParentField])) {
+			continue // reported in Plan.Unchecked
+		}
 		matches := live[key]
 		switch {
 		case len(matches) > 1:

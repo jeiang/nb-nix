@@ -2,7 +2,9 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 
 	"github.com/jeiang/nb-nix/internal/nbapi"
 )
@@ -24,13 +26,16 @@ type LiveObj struct {
 type Snapshot struct {
 	AccountID string
 	Objects   map[string][]*LiveObj
-	idName    map[string]map[string]string
-	nameIDs   map[string]map[string][]string
+	// Unread lists, per child kind, the parents whose children the token may
+	// not read (an auditor cannot list other service users' tokens).
+	Unread  map[string][]string
+	idName  map[string]map[string]string
+	nameIDs map[string]map[string][]string
 }
 
 // Fetch reads every managed kind from the server.
 func Fetch(ctx context.Context, c *nbapi.Client) (*Snapshot, error) {
-	s := &Snapshot{Objects: map[string][]*LiveObj{}}
+	s := &Snapshot{Objects: map[string][]*LiveObj{}, Unread: map[string][]string{}}
 	for _, k := range Kinds {
 		objs, err := fetchKind(ctx, c, s, k)
 		if err != nil {
@@ -72,6 +77,11 @@ func fetchKind(ctx context.Context, c *nbapi.Client, s *Snapshot, k *Kind) ([]*L
 		for _, p := range s.Objects[k.Parent] {
 			var docs []Doc
 			if err := c.Do(ctx, "GET", k.Collection(p.ID), nil, &docs); err != nil {
+				var he *nbapi.HTTPError
+				if errors.As(err, &he) && he.Status == http.StatusForbidden {
+					s.Unread[k.Name] = append(s.Unread[k.Name], str(p.Raw["name"]))
+					continue
+				}
 				return nil, err
 			}
 			for _, d := range docs {

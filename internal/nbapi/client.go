@@ -51,7 +51,7 @@ func (c *Client) Do(ctx context.Context, method, path string, body, out any) err
 	if err != nil {
 		var apiErr *rest.APIError
 		if errors.As(err, &apiErr) {
-			return fmt.Errorf("%s %s: HTTP %d: %s", method, path, apiErr.StatusCode, apiErr.Message)
+			return &HTTPError{Method: method, Path: path, Status: apiErr.StatusCode, Message: apiErr.Message}
 		}
 		return fmt.Errorf("%s %s: %w", method, path, err)
 	}
@@ -69,6 +69,17 @@ func (c *Client) Do(ctx context.Context, method, path string, body, out any) err
 		return fmt.Errorf("%s %s: decode body: %w", method, path, err)
 	}
 	return nil
+}
+
+// HTTPError is a non-2xx API response.
+type HTTPError struct {
+	Method, Path string
+	Status       int
+	Message      string
+}
+
+func (e *HTTPError) Error() string {
+	return fmt.Sprintf("%s %s: HTTP %d: %s", e.Method, e.Path, e.Status, e.Message)
 }
 
 // ServerVersion returns the running management version without a leading "v".
