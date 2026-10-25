@@ -139,6 +139,16 @@ func TestPlanApplyCycle(t *testing.T) {
 		cfg = changed
 	})
 
+	t.Run("rule targets switch between resource and groups", func(t *testing.T) {
+		toGroups := strings.Replace(cfg, `"destinationResource": {"id": "lab-subnet", "type": "subnet"}`, `"destinations": ["servers"]`, 1)
+		for _, want := range []string{toGroups, cfg} {
+			if err := apply(t, c, plan(t, c, want), false); err != nil {
+				t.Fatal(err)
+			}
+			requireNoChanges(t, c, want)
+		}
+	})
+
 	t.Run("stale plan is refused", func(t *testing.T) {
 		p := plan(t, c, fullConfig(sink, `["22"]`))
 		// Someone edits the policy between plan and apply.

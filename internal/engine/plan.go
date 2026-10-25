@@ -306,11 +306,21 @@ func walkObjects(v any, segs []string, fn func(map[string]any)) (any, bool) {
 	return out, found
 }
 
+// mergeFor overlays want on live, then lets the kind drop live fields that
+// the declaration replaces.
+func mergeFor(k *Kind, live, want Doc) Doc {
+	merged := overlay(live, want).(map[string]any)
+	if k.Merge != nil {
+		k.Merge(merged, want)
+	}
+	return merged
+}
+
 // updateOp compares a live object with its declaration. It returns the update
 // (if anything differs) and reasons the update cannot be made.
 func updateOp(k *Kind, o *LiveObj, want Doc) (Op, bool, []string) {
 	liveView := compareView(k, o.Named)
-	merged := overlay(liveView, compareView(k, want)).(map[string]any)
+	merged := mergeFor(k, liveView, compareView(k, want))
 	changes := diff("", canon(k, liveView), canon(k, merged))
 	if len(changes) == 0 {
 		return Op{}, false, nil
@@ -321,7 +331,7 @@ func updateOp(k *Kind, o *LiveObj, want Doc) (Op, bool, []string) {
 	}
 	op := Op{
 		Kind: k.Name, Key: o.Key, Action: "update", LiveID: o.ID, Parent: o.ParentID, Hash: o.Hash,
-		Body: overlay(o.Named, want).(map[string]any), Changes: changes,
+		Body: mergeFor(k, o.Named, want), Changes: changes,
 	}
 	for _, c := range changes {
 		for _, f := range k.Immutable {

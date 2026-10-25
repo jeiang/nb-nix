@@ -72,6 +72,9 @@ type Kind struct {
 	Check func(raw, old, new Doc) []string
 	// Renew returns a reason to replace an otherwise unchanged object.
 	Renew func(raw, want Doc) string
+	// Merge fixes up live-overlaid-with-desired documents, dropping live
+	// fields that a declared field replaces.
+	Merge func(merged, want Doc)
 	// CreateBody and UpdateBody build request bodies from a named document.
 	CreateBody func(d Doc) Doc
 	UpdateBody func(d Doc) Doc
@@ -306,6 +309,25 @@ var Kinds = []*Kind{
 			return raw
 		},
 		Key: nameKey,
+		// A rule takes groups or a resource on each side, never both: declaring
+		// one replaces the live other.
+		Merge: func(merged, want Doc) {
+			mr, _ := merged["rules"].([]any)
+			wr, _ := want["rules"].([]any)
+			for i := range min(len(mr), len(wr)) {
+				m, _ := mr[i].(map[string]any)
+				w, _ := wr[i].(map[string]any)
+				for _, pair := range [][2]string{{"sources", "sourceResource"}, {"destinations", "destinationResource"}} {
+					for j := range 2 {
+						if _, declared := w[pair[j]]; declared {
+							if _, both := w[pair[1-j]]; !both {
+								delete(m, pair[1-j])
+							}
+						}
+					}
+				}
+			}
+		},
 		Protected: func(raw, _ Doc) bool {
 			return strings.HasPrefix(str(raw["name"]), "Temporary access policy for peer ")
 		},
