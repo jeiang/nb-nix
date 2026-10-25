@@ -60,7 +60,8 @@
         };
         vendorHash = "sha256-UYRFE+68J/SrkGCvQ4uL0A8K23z8K03mrYBmjgDPRoQ=";
         proxyVendor = true;
-        subPackages = ["cmd/nb-nix"];
+        # Only cmd/nb-nix installs a binary; the others are listed so their tests run.
+        subPackages = ["cmd/nb-nix" "internal/engine" "internal/nbapi"];
         env.CGO_ENABLED = "0";
         meta.mainProgram = "nb-nix";
       };
@@ -68,7 +69,41 @@
       # used by `just server-test` and the VM integration test.
       netbird-server = netbirdComponent "combined";
       netbird-client = netbirdComponent "client";
+      example-desired = (self.lib.evalConfig {
+        inherit pkgs;
+        modules = [./examples/basic.nix];
+      }).config.netbird.desiredFile;
     });
+
+    checks = forAllSystems (pkgs: let
+      system = pkgs.stdenv.hostPlatform.system;
+      p = self.packages.${system};
+      genOptions = p.nb-nix.overrideAttrs {
+        pname = "nb-nix-gen-options";
+        subPackages = ["cmd/gen-options"];
+      };
+    in
+      {
+        inherit (p) nb-nix example-desired;
+        # The flake's NetBird source and go.mod's NetBird module are the same
+        # release, and the committed Nix options match that release's API.
+        netbird-version = pkgs.runCommand "netbird-version" {nativeBuildInputs = [pkgs.unzip];} ''
+          spec=shared/management/http/api/openapi.yml
+          unzip -p ${p.nb-nix.goModules}/github.com/netbirdio/netbird/@v/v${netbirdVersion}.zip \
+            "github.com/netbirdio/netbird@v${netbirdVersion}/$spec" > module.yml
+          cmp module.yml ${netbird-src}/$spec
+          ${genOptions}/bin/gen-options ${netbird-src}/$spec v${netbirdVersion} > options.nix
+          diff -u ${./nix/options.generated.nix} options.nix
+          touch $out
+        '';
+      }
+      // lib.optionalAttrs (system == "x86_64-linux") {
+        integration = import ./nix/vm-test.nix {
+          inherit pkgs;
+          inherit (p) nb-nix netbird-server netbird-client;
+          inherit (self.lib) evalConfig;
+        };
+      });
 
     devShells = forAllSystems (pkgs: {
       default = pkgs.mkShell {
