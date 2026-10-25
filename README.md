@@ -83,8 +83,9 @@ are changes), `apply [--allow-risky] [--rotate KIND/NAME]`.
   Users are never deleted (that deletes their peers). Service users are a
   separate kind (`service_users`), which nb-nix can create and prune; the
   service user the API token belongs to is never pruned.
-- **Stale plans are refused.** The plan stores a hash of every object it read;
-  apply re-reads them and stops if any changed.
+- **Stale plans are refused.** The plan stores a hash of each object's
+  request fields (what nb-nix would send back); apply re-reads them and stops
+  if any changed. Server-maintained fields such as `last_seen` do not count.
 - **Risky changes need `--allow-risky`:** deletes, setup key replacement,
   account `network_range`/`network_range_v6`/`dns_domain`, turning peer
   approval off, turning groups propagation on, turning `jwt_groups_enabled`
@@ -117,8 +118,9 @@ are changes), `apply [--allow-risky] [--rotate KIND/NAME]`.
   days (default 365) and their value goes through `sink`, like setup keys.
   Tokens cannot be updated: with `renew_before_days = N`, a token that
   expires within N days is replaced (risky: new token through the sink, then
-  the old one is deleted). nb-nix can renew its own token this way; tokens
-  of the user the API token belongs to are never pruned.
+  the old one is deleted). nb-nix can renew the token it runs with: the old
+  token is deleted as the very last request of the apply. Tokens of the user
+  the API token belongs to are never pruned.
 - Plan files never contain secret values, only file paths.
 
 ## Development

@@ -43,8 +43,18 @@ func Apply(ctx context.Context, c *nbapi.Client, p *Plan, opts ApplyOptions) err
 		}
 		fmt.Fprintf(opts.Log, "%s %s %s\n", pastTense(op.Action), op.Kind, quote(op.Key))
 	}
+	// Old tokens of the user this apply authenticates as go last: deleting one
+	// earlier could revoke the credential the remaining requests use.
+	for _, del := range a.deferred {
+		if err := a.c.Do(ctx, "DELETE", del.path, nil, nil); err != nil {
+			return fmt.Errorf("delete replaced %s: %w (all other changes made)", del.what, err)
+		}
+		fmt.Fprintf(opts.Log, "deleted replaced %s\n", del.what)
+	}
 	return nil
 }
+
+type deferredDelete struct{ path, what string }
 
 func pastTense(action string) string {
 	switch action {
@@ -98,10 +108,11 @@ func checkStale(snap *Snapshot, p *Plan) error {
 }
 
 type applier struct {
-	c       *nbapi.Client
-	snap    *Snapshot
-	opts    ApplyOptions
-	created map[string]map[string]string // kind -> name -> id
+	c        *nbapi.Client
+	snap     *Snapshot
+	opts     ApplyOptions
+	created  map[string]map[string]string // kind -> name -> id
+	deferred []deferredDelete
 }
 
 func (a *applier) do(ctx context.Context, op *Op) error {
@@ -117,6 +128,10 @@ func (a *applier) do(ctx context.Context, op *Op) error {
 	case "replace":
 		if _, err := a.create(ctx, k, op); err != nil {
 			return err
+		}
+		if k.Parent != "" && a.parentIsCurrent(k, op.Parent) {
+			a.deferred = append(a.deferred, deferredDelete{k.Item(op.Parent, op.LiveID), op.Kind + " " + quote(op.Key)})
+			return nil
 		}
 		return a.c.Do(ctx, "DELETE", k.Item(op.Parent, op.LiveID), nil, nil)
 	case "update":
@@ -134,6 +149,17 @@ func (a *applier) do(ctx context.Context, op *Op) error {
 		return a.c.Do(ctx, "PUT", k.Item(op.Parent, id), body, nil)
 	}
 	return fmt.Errorf("unknown action %q", op.Action)
+}
+
+// parentIsCurrent reports whether the parent object is the user the API token
+// belongs to.
+func (a *applier) parentIsCurrent(k *Kind, parentID string) bool {
+	for _, o := range a.snap.Objects[k.Parent] {
+		if o.ID == parentID {
+			return isCurrent(o.Raw)
+		}
+	}
+	return false
 }
 
 func (a *applier) create(ctx context.Context, k *Kind, op *Op) (string, error) {

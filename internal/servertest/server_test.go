@@ -296,6 +296,26 @@ func TestPlanApplyCycle(t *testing.T) {
 		if _, err := nbapi.New(os.Getenv("NB_TEST_MANAGEMENT_URL"), first).ServerVersion(ctx); err == nil {
 			t.Error("old token still works after replacement")
 		}
+
+		// The deployer renews its own token while also changing a setting
+		// that applies after tokens: the old token must stay valid until the end.
+		self := nbapi.New(os.Getenv("NB_TEST_MANAGEMENT_URL"), second)
+		renewSelf := strings.Replace(cfgFor(60), `"service_users":`,
+			`"account": {"settings": {"peer_login_expiration": 7200}}, "service_users":`, 1)
+		p = plan(t, self, renewSelf)
+		if len(p.Ops) != 2 || p.Ops[0].Kind != "tokens" || p.Ops[1].Kind != "account" {
+			t.Fatalf("want token replace then account update, got:\n%s", describe(p))
+		}
+		if err := apply(t, self, p, true); err != nil {
+			t.Fatalf("self-renewal broke the apply: %v", err)
+		}
+		third, ok := tokenWorks()
+		if !ok || third == second {
+			t.Fatal("self-renewed token missing or not working")
+		}
+		if _, err := self.ServerVersion(ctx); err == nil {
+			t.Error("token used for the apply still works after it was replaced")
+		}
 	})
 }
 

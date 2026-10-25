@@ -12,10 +12,12 @@ type LiveObj struct {
 	ID         string
 	ParentID   string
 	ParentName string
-	Raw        Doc    // response as returned
-	Hash       string // hash of Raw
-	Named      Doc    // request shape with IDs replaced by names
-	Key        string
+	Raw        Doc // response as returned
+	// Hash covers the named document only, so fields the server changes on
+	// its own (last_seen, last_used, connection state) do not stale a plan.
+	Hash  string
+	Named Doc // request shape with IDs replaced by names
+	Key   string
 }
 
 // Snapshot is the live state of every managed kind.
@@ -94,7 +96,7 @@ func fetchKind(ctx context.Context, c *nbapi.Client, s *Snapshot, k *Kind) ([]*L
 }
 
 func newLive(id, parentID, parentName string, raw Doc) *LiveObj {
-	return &LiveObj{ID: id, ParentID: parentID, ParentName: parentName, Raw: raw, Hash: hashOf(raw)}
+	return &LiveObj{ID: id, ParentID: parentID, ParentName: parentName, Raw: raw}
 }
 
 func (s *Snapshot) index() {
@@ -145,6 +147,7 @@ func (s *Snapshot) name(k *Kind, o *LiveObj) error {
 		named[key] = o.Raw[key]
 	}
 	o.Named = named
+	o.Hash = hashOf(named)
 	o.Key = k.Key(named)
 	return nil
 }
