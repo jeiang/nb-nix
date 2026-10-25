@@ -1,0 +1,45 @@
+{
+  "nodes": {
+    "netbird-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1792832172,
+        "narHash": "sha256-TeogciNE+STwCaE99smcWXrgKwAkkg79LcrkSDWLpWA=",
+        "owner": "netbirdio",
+        "repo": "netbird",
+        "rev": "7e791d3e2972ddb763bb0e5c3bff4f9e14f70033",
+        "type": "github"
+      },
+      "original": {
+        "owner": "netbirdio",
+        "ref": "v0.81.4",
+        "repo": "netbird",
+        "type": "github"
+      }
+    },
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1792773339,
+        "narHash": "sha256-rZLrzrC6i+jnTAlvPZHogKDulY7WWDEv9hJeHieO7Zw=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "3ec636362e1816bc2f0888fa0fa2c69f1bc9e504",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixos-unstable",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "root": {
+      "inputs": {
+        "netbird-src": "netbird-src",
+        "nixpkgs": "nixpkgs"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}
