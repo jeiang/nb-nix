@@ -85,6 +85,9 @@ are changes), `apply [--allow-risky] [--rotate KIND/NAME]`.
   Users are never deleted (that deletes their peers). Service users are a
   separate kind (`service_users`), which nb-nix can create and prune; the
   service user the API token belongs to is never pruned.
+- **Read-only plans:** `plan` works with an Auditor-role token, for drift
+  checks in CI. An auditor may not list other service users' tokens; the plan
+  lists those as "Not checked" and plans no token changes for them.
 - **Stale plans are refused.** The plan stores a hash of each object's
   request fields (what nb-nix would send back); apply re-reads them and stops
   if any changed. Server-maintained fields such as `last_seen` do not count.
