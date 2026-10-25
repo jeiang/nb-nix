@@ -33,48 +33,62 @@
     then map clean v
     else v;
 
-  prunable = ["posture_checks" "groups" "networks" "network_resources" "network_routers" "nameserver_groups" "policies" "setup_keys" "services"];
+  prunable = ["posture_checks" "groups" "networks" "network_resources" "network_routers" "nameserver_groups" "policies" "setup_keys" "services" "service_users" "tokens"];
 
-  setupKeyExtra = {
-    options = {
-      revoked = lib.mkOption {
-        type = t.nullOr t.bool;
-        default = null;
-        description = "Whether the setup key is revoked.";
-      };
-      sink = lib.mkOption {
-        type = t.nullOr (t.submodule {
-          options = {
-            command = lib.mkOption {
-              type = t.nonEmptyListOf t.str;
-              description = "Command (argv, no shell) that receives a newly created key on stdin.";
-            };
-            format = lib.mkOption {
-              type = t.enum ["json" "raw"];
-              default = "json";
-              description = "Write the key as a JSON string (for `sops set --value-stdin`) or as raw text.";
-            };
+  sinkOption = what:
+    lib.mkOption {
+      type = t.nullOr (t.submodule {
+        options = {
+          command = lib.mkOption {
+            type = t.nonEmptyListOf t.str;
+            description = "Command (argv, no shell) that receives the new ${what} on stdin.";
           };
-        });
-        default = null;
-        description = "Where a newly created setup key value goes. Required to create a key.";
-      };
+          format = lib.mkOption {
+            type = t.enum ["json" "raw"];
+            default = "json";
+            description = "Write the ${what} as a JSON string (for `sops set --value-stdin`) or as raw text.";
+          };
+        };
+      });
+      default = null;
+      description = "Where a newly created ${what} goes (it is shown only once). Required to create one.";
+    };
+  optional = type: description:
+    lib.mkOption {
+      type = t.nullOr type;
+      default = null;
+      inherit description;
+    };
+
+  setupKeyExtra.options = {
+    revoked = optional t.bool "Whether the setup key is revoked.";
+    sink = sinkOption "setup key";
+  };
+
+  networkExtra.options = {
+    resources = objects gen.NetworkResourceRequest "Network resources of this network.";
+    routers = lib.mkOption {
+      type = t.attrsOf (t.submodule gen.NetworkRouterRequest);
+      default = {};
+      description = "Routing peers of this network. Routers have no name; the attribute name is only a handle.";
     };
   };
 
-  networkExtra = {
-    options = {
-      resources = objects gen.NetworkResourceRequest "Network resources of this network.";
-      routers = lib.mkOption {
-        type = t.attrsOf (t.submodule gen.NetworkRouterRequest);
-        default = {};
-        description = "Routing peers of this network. Routers have no name; the attribute name is only a handle.";
-      };
-    };
+  tokenOptions.options = {
+    name = optional t.str "Token name; identifies the token within its service user.";
+    expires_in = optional (t.ints.between 1 365) "Lifetime in days, applied when the token is created (default 365).";
+    renew_before_days = optional t.ints.unsigned "Replace the token (risky) once it expires within this many days.";
+    sink = sinkOption "token";
   };
 
-  networks = lib.attrValues cfg.networks;
-  children = field: lib.concatMap (n: map (c: c // {network = n.name;}) (lib.attrValues n.${field})) networks;
+  serviceUserExtra.options = {
+    name = optional t.str "Service user name; identifies the user.";
+    tokens = objects tokenOptions "Personal access tokens of this service user.";
+  };
+
+  # Child objects carry their parent's name in parentField.
+  children = parents: field: parentField:
+    lib.concatMap (p: map (c: c // {${parentField} = p.name;}) (lib.attrValues p.${field})) (lib.attrValues parents);
 in {
   options.netbird = {
     server = lib.mkOption {
@@ -120,6 +134,7 @@ in {
       default = {};
       description = "Existing human users to manage (role, auto_groups, is_blocked). Users are never created or deleted; leave `role` undeclared for the owner.";
     };
+    service_users = objects [gen.UserRequest serviceUserExtra] "Service users and their tokens.";
 
     desired = lib.mkOption {
       type = t.attrs;
@@ -142,15 +157,17 @@ in {
         else {inherit (cfg.account) settings;};
       posture_checks = lib.attrValues cfg.posture_checks;
       groups = lib.attrValues cfg.groups;
-      networks = map (n: removeAttrs n ["resources" "routers"]) networks;
-      network_resources = children "resources";
-      network_routers = children "routers";
+      networks = map (n: removeAttrs n ["resources" "routers"]) (lib.attrValues cfg.networks);
+      network_resources = children cfg.networks "resources" "network";
+      network_routers = children cfg.networks "routers" "network";
       nameserver_groups = lib.attrValues cfg.nameserver_groups;
       policies = lib.attrValues cfg.policies;
       setup_keys = lib.attrValues cfg.setup_keys;
       services = lib.attrValues cfg.services;
       peers = lib.attrValues cfg.peers;
       users = lib.attrValues cfg.users;
+      service_users = map (u: removeAttrs u ["tokens"]) (lib.attrValues cfg.service_users);
+      tokens = children cfg.service_users "tokens" "user";
     };
     desiredFile = pkgs.writeText "netbird-desired.json" (builtins.toJSON cfg.desired);
   };

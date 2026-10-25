@@ -146,7 +146,7 @@ func (a *applier) create(ctx context.Context, k *Kind, op *Op) (string, error) {
 	}
 	parent := ""
 	if k.Parent != "" {
-		parent, err = a.resolve(k.Parent, str(op.Body["network"]))
+		parent, err = a.resolve(k.Parent, str(op.Body[k.ParentField]))
 		if err != nil {
 			return "", err
 		}
@@ -155,15 +155,19 @@ func (a *applier) create(ctx context.Context, k *Kind, op *Op) (string, error) {
 	if err := a.c.Do(ctx, "POST", k.Collection(parent), body, &resp); err != nil {
 		return "", err
 	}
-	id := str(resp["id"])
+	idPath := "id"
+	if k.Sink != nil {
+		idPath = k.Sink.ID
+	}
+	id := str(get(resp, idPath))
 	if a.created[k.Name] == nil {
 		a.created[k.Name] = map[string]string{}
 	}
 	if n := str(body["name"]); n != "" {
 		a.created[k.Name][n] = id
 	}
-	if k.Name == "setup_keys" {
-		if err := a.sinkKey(ctx, k, op, id, str(resp["key"])); err != nil {
+	if k.Sink != nil {
+		if err := a.sinkSecret(ctx, k, op, parent, id, str(get(resp, k.Sink.Secret))); err != nil {
 			return "", err
 		}
 	}
@@ -171,11 +175,15 @@ func (a *applier) create(ctx context.Context, k *Kind, op *Op) (string, error) {
 }
 
 // body turns the named document of op into a request body: names become IDs,
-// desired-only keys go, and secrets are read from their files or left empty.
+// desired-only keys (and create-only keys, except on create) go, and secrets
+// are read from their files or left empty.
 func (a *applier) body(k *Kind, op *Op, withSecrets bool) (Doc, error) {
 	d := deepCopy(op.Body).(map[string]any)
 	for _, key := range k.DesiredOnly {
-		if key != "expires_in" || op.Action == "update" {
+		delete(d, key)
+	}
+	if op.Action == "update" {
+		for _, key := range k.CreateOnly {
 			delete(d, key)
 		}
 	}
@@ -226,19 +234,23 @@ func (a *applier) resolve(kind, name string) (string, error) {
 	}
 }
 
-// sinkKey hands a new setup key value to the configured command on stdin.
-// If that fails, the key is deleted (or revoked) so no unrecorded key stays.
-func (a *applier) sinkKey(ctx context.Context, k *Kind, op *Op, id, value string) error {
+// sinkSecret hands a secret returned at creation to the object's sink command
+// on stdin. If that fails, the new object is deleted (setup keys are revoked
+// if deleting fails) so no unrecorded secret stays valid.
+func (a *applier) sinkSecret(ctx context.Context, k *Kind, op *Op, parent, id, value string) error {
 	err := runSink(ctx, op.Body["sink"], value)
 	if err == nil {
 		return nil
 	}
-	if delErr := a.c.Do(ctx, "DELETE", k.Item("", id), nil, nil); delErr != nil {
-		revErr := a.c.Do(ctx, "PUT", k.Item("", id), Doc{"revoked": true, "auto_groups": []any{}}, nil)
-		return errors.Join(fmt.Errorf("setup key sink: %w", err),
-			fmt.Errorf("delete new key %s: %w", id, delErr), revErr)
+	if delErr := a.c.Do(ctx, "DELETE", k.Item(parent, id), nil, nil); delErr != nil {
+		var revErr error
+		if k.Name == "setup_keys" {
+			revErr = a.c.Do(ctx, "PUT", k.Item(parent, id), Doc{"revoked": true, "auto_groups": []any{}}, nil)
+		}
+		return errors.Join(fmt.Errorf("%s sink: %w", k.Name, err),
+			fmt.Errorf("delete new %s %s: %w", k.Name, id, delErr), revErr)
 	}
-	return fmt.Errorf("setup key sink failed, new key deleted: %w", err)
+	return fmt.Errorf("%s sink failed, new object deleted: %w", k.Name, err)
 }
 
 func runSink(ctx context.Context, sink any, value string) error {

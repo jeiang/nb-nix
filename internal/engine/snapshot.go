@@ -139,7 +139,7 @@ func (s *Snapshot) name(k *Kind, o *LiveObj) error {
 		return err
 	}
 	if k.Parent != "" {
-		named["network"] = o.ParentName
+		named[k.ParentField] = o.ParentName
 	}
 	for _, key := range k.Keep {
 		named[key] = o.Raw[key]

@@ -8,6 +8,7 @@ package servertest
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -248,6 +249,52 @@ func TestPlanApplyCycle(t *testing.T) {
 		}
 		if _, err := engine.MakePlan(snap, want); err == nil || !strings.Contains(err.Error(), "owner") {
 			t.Fatalf("want owner refusal, got %v", err)
+		}
+	})
+
+	t.Run("service user tokens go through the sink and renew", func(t *testing.T) {
+		tokenFile := filepath.Join(t.TempDir(), "token")
+		cfgFor := func(renew int) string {
+			return fmt.Sprintf(`{
+				"service_users": [{"name": "deployer", "role": "admin"}],
+				"tokens": [{"user": "deployer", "name": "main", "expires_in": 30, "renew_before_days": %d,
+				            "sink": {"command": ["sh", "-c", "cat > %s"], "format": "raw"}}]
+			}`, renew, tokenFile)
+		}
+		tokenWorks := func() (string, bool) {
+			b, err := os.ReadFile(tokenFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = nbapi.New(os.Getenv("NB_TEST_MANAGEMENT_URL"), string(b)).ServerVersion(ctx)
+			return string(b), err == nil
+		}
+		p := plan(t, c, cfgFor(0))
+		if p.Counts()["create"] != 2 {
+			t.Fatalf("want service user and token created, got:\n%s", describe(p))
+		}
+		if err := apply(t, c, p, false); err != nil {
+			t.Fatal(err)
+		}
+		first, ok := tokenWorks()
+		if !ok {
+			t.Fatal("token from the sink does not authenticate")
+		}
+		requireNoChanges(t, c, cfgFor(0))
+		// A 30-day token renewed 60 days ahead is replaced on every plan.
+		p = plan(t, c, cfgFor(60))
+		if len(p.Ops) != 1 || p.Ops[0].Action != "replace" {
+			t.Fatalf("want token replacement, got:\n%s", describe(p))
+		}
+		if err := apply(t, c, p, true); err != nil {
+			t.Fatal(err)
+		}
+		second, ok := tokenWorks()
+		if !ok || second == first {
+			t.Fatal("replacement token missing or not working")
+		}
+		if _, err := nbapi.New(os.Getenv("NB_TEST_MANAGEMENT_URL"), first).ServerVersion(ctx); err == nil {
+			t.Error("old token still works after replacement")
 		}
 	})
 }

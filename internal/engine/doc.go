@@ -397,6 +397,20 @@ func get(v any, path string) any {
 	return v
 }
 
+// numberOf returns a JSON number as float64.
+func numberOf(v any) (float64, bool) {
+	switch n := v.(type) {
+	case json.Number:
+		f, err := n.Float64()
+		return f, err == nil
+	case float64:
+		return n, true
+	case int:
+		return float64(n), true
+	}
+	return 0, false
+}
+
 func str(v any) string {
 	s, _ := v.(string)
 	return s

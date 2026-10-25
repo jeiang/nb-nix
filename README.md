@@ -23,6 +23,7 @@ you pass `--ignore-version`.
 | `services.<k>` | reverse-proxy services | name |
 | `peers.<k>` | existing peers (adopt only; peers cannot be created) | name |
 | `users.<k>` | existing human users: `role`, `auto_groups`, `is_blocked` (adopt only) | email |
+| `service_users.<k>` with `.tokens.<k>` | service users and their personal access tokens | name; tokens by service user + name |
 
 `<k>` is only a Nix handle; `name` defaults to it. Field names are the NetBird
 API's (see `nix/options.generated.nix`, generated from the API spec). Every
@@ -30,8 +31,8 @@ field that holds IDs in the API (groups, peers, posture checks, network
 resources, policy and service targets) takes **names** instead; nb-nix
 resolves them, including objects created in the same apply.
 
-Not managed: routes (use networks), service users and tokens, identity
-providers, proxy tokens, DNS zones, cloud-only integrations.
+Not managed: routes (use networks), identity providers, proxy tokens, DNS
+zones, cloud-only integrations.
 
 ## Use
 
@@ -79,8 +80,9 @@ are changes), `apply [--allow-risky] [--rotate KIND/NAME]`.
   server would reject: the owner's role or blocked state, assigning `owner`,
   the token's own role or blocked state, and the `All` group. Leave `role`
   undeclared for the owner (`import` does); ownership moves in the dashboard.
-  Users are never deleted (that deletes their peers) and service users are
-  ignored.
+  Users are never deleted (that deletes their peers). Service users are a
+  separate kind (`service_users`), which nb-nix can create and prune; the
+  service user the API token belongs to is never pruned.
 - **Stale plans are refused.** The plan stores a hash of every object it read;
   apply re-reads them and stops if any changed.
 - **Risky changes need `--allow-risky`:** deletes, setup key replacement,
@@ -111,6 +113,12 @@ are changes), `apply [--allow-risky] [--rotate KIND/NAME]`.
   the secret must be sent: on create, when the auth method is turned on, or
   with `--rotate services/NAME`. Otherwise the server keeps its stored value.
   nb-nix cannot detect a changed secret file; rotate explicitly.
+- **Tokens** (`service_users.<k>.tokens.<k>`) are created with `expires_in`
+  days (default 365) and their value goes through `sink`, like setup keys.
+  Tokens cannot be updated: with `renew_before_days = N`, a token that
+  expires within N days is replaced (risky: new token through the sink, then
+  the old one is deleted). nb-nix can renew its own token this way; tokens
+  of the user the API token belongs to are never pruned.
 - Plan files never contain secret values, only file paths.
 
 ## Development

@@ -3,6 +3,7 @@ package engine
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func userSnapshot(t *testing.T) *Snapshot {
@@ -101,5 +102,74 @@ func TestJWTGroupSyncToggleIsRisky(t *testing.T) {
 	p := mustPlan(t, s, desired(t, `{"account": {"settings": {"jwt_groups_enabled": false}}}`))
 	if op := opFor(p, "account", ""); op == nil || len(op.Risky) == 0 {
 		t.Fatalf("turning off the group sync is not risky: %+v", op)
+	}
+}
+
+func tokenSnapshot(t *testing.T, expires string) *Snapshot {
+	return snapshot(t, map[string]string{
+		"service_users": `[
+			{"id": "s-me", "name": "nb-nix", "role": "admin", "auto_groups": [], "is_blocked": false, "is_service_user": true, "is_current": true},
+			{"id": "s-ci", "name": "ci", "role": "auditor", "auto_groups": [], "is_blocked": false, "is_service_user": true, "is_current": false}
+		]`,
+		"tokens": `[
+			{"_parent": "s-me", "_parent_name": "nb-nix", "id": "t-me", "name": "main", "expiration_date": "` + expires + `"},
+			{"_parent": "s-ci", "_parent_name": "ci", "id": "t-ci", "name": "weekly", "expiration_date": "` + expires + `"},
+			{"_parent": "s-ci", "_parent_name": "ci", "id": "t-old", "name": "old", "expiration_date": "` + expires + `"}
+		]`,
+	})
+}
+
+func TestTokenRenewsBeforeExpiry(t *testing.T) {
+	soon := time.Now().Add(10 * 24 * time.Hour).UTC().Format(time.RFC3339)
+	s := tokenSnapshot(t, soon)
+	sink := `"sink": {"command": ["true"]}`
+	p := mustPlan(t, s, desired(t, `{"tokens": [{"user": "ci", "name": "weekly", "renew_before_days": 30, `+sink+`}]}`))
+	op := opFor(p, "tokens", "ci/weekly")
+	if op == nil || op.Action != "replace" || len(op.Risky) == 0 || op.Parent != "s-ci" {
+		t.Fatalf("want risky replace under s-ci, got %+v", p.Ops)
+	}
+	p = mustPlan(t, s, desired(t, `{"tokens": [{"user": "ci", "name": "weekly", "renew_before_days": 5, `+sink+`}]}`))
+	if len(p.Ops) != 0 {
+		t.Fatalf("token renewed too early: %+v", p.Ops)
+	}
+	if _, err := MakePlan(s, desired(t, `{"tokens": [{"user": "ci", "name": "weekly", "renew_before_days": 30}]}`)); err == nil {
+		t.Error("renewal without a sink must fail the plan")
+	}
+}
+
+func TestServiceUserAndTokenCreateInOneApply(t *testing.T) {
+	s := tokenSnapshot(t, time.Now().Add(100*24*time.Hour).UTC().Format(time.RFC3339))
+	p := mustPlan(t, s, desired(t, `{
+		"service_users": [{"name": "deployer", "role": "admin"}],
+		"tokens": [{"user": "deployer", "name": "main", "expires_in": 90, "sink": {"command": ["true"]}}]
+	}`))
+	if len(p.Ops) != 2 || p.Ops[0].Kind != "service_users" || p.Ops[1].Kind != "tokens" {
+		t.Fatalf("want service user then token, got %+v", p.Ops)
+	}
+	body := KindByName("service_users").CreateBody(p.Ops[0].Body)
+	if body["is_service_user"] != true || body["name"] != "deployer" {
+		t.Errorf("service user create body: %v", body)
+	}
+	a := &applier{snap: s, created: map[string]map[string]string{}}
+	tb, err := a.body(KindByName("tokens"), &p.Ops[1], true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tb = KindByName("tokens").CreateBody(tb); len(tb) != 2 || tb["expires_in"] == nil {
+		t.Errorf("token create body must be name and expires_in: %v", tb)
+	}
+}
+
+func TestPruneNeverDeletesTheTokenNbNixUses(t *testing.T) {
+	s := tokenSnapshot(t, time.Now().Add(100*24*time.Hour).UTC().Format(time.RFC3339))
+	p := mustPlan(t, s, desired(t, `{"prune": {"tokens": true}, "service_users": [{"name": "nb-nix"}, {"name": "ci"}]}`))
+	var deleted []string
+	for _, op := range p.Ops {
+		if op.Action == "delete" {
+			deleted = append(deleted, op.Key)
+		}
+	}
+	if strings.Join(deleted, ",") != "ci/old,ci/weekly" && strings.Join(deleted, ",") != "ci/weekly,ci/old" {
+		t.Errorf("deleted %v, want only ci's tokens", deleted)
 	}
 }

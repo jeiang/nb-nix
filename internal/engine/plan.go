@@ -156,22 +156,32 @@ func planKind(k *Kind, snap *Snapshot, want *Desired) (ops, deletes []Op, unmana
 			for _, e := range checkErrs {
 				errs = append(errs, fmt.Sprintf("%s %q: %s", k.Name, key, e))
 			}
+			if !ok && k.Renew != nil {
+				if reason := k.Renew(o.Raw, d); reason != "" {
+					op, ok = Op{
+						Kind: k.Name, Key: key, Action: "replace", LiveID: o.ID, Parent: o.ParentID, Hash: o.Hash,
+						Body: overlay(o.Named, d).(map[string]any), Risky: []string{"replaces " + k.Name + " " + quote(key) + ": " + reason},
+					}, true
+				}
+			}
 			if ok {
 				ops = append(ops, op)
 			}
 		}
-		if n := len(ops); n > 0 && ops[n-1].Key == key && k.Name == "setup_keys" &&
+		if n := len(ops); n > 0 && ops[n-1].Key == key && k.Sink != nil &&
 			(ops[n-1].Action == "create" || ops[n-1].Action == "replace") && d["sink"] == nil {
-			errs = append(errs, fmt.Sprintf("setup_keys %q: creating a key needs a sink (the value is shown only once)", key))
+			errs = append(errs, fmt.Sprintf("%s %q: creating it needs a sink (the secret is shown only once)", k.Name, key))
 		}
 	}
 	if k.Singleton || k.Quiet {
 		return ops, nil, nil, errs
 	}
 	deletedParents := map[string]bool{}
+	parents := map[string]Doc{}
 	if k.Parent != "" {
 		for _, o := range snap.Objects[k.Parent] {
-			if want.Prune[k.Parent] && !declaredIn(want, snap, k.Parent, o.Key) {
+			parents[o.ID] = o.Raw
+			if want.Prune[k.Parent] && !declaredIn(want, k.Parent, o.Key) {
 				deletedParents[o.ID] = true
 			}
 		}
@@ -186,7 +196,7 @@ func planKind(k *Kind, snap *Snapshot, want *Desired) (ops, deletes []Op, unmana
 			continue
 		}
 		for _, o := range live[key] {
-			protected := k.NoDelete || (k.Protected != nil && k.Protected(o.Raw))
+			protected := k.NoDelete || (k.Protected != nil && k.Protected(o.Raw, parents[o.ParentID]))
 			unmanaged = append(unmanaged, Unmanaged{Kind: k.Name, Key: key, Protected: protected})
 			if !want.Prune[k.Name] || protected || deletedParents[o.ParentID] {
 				continue
@@ -200,7 +210,7 @@ func planKind(k *Kind, snap *Snapshot, want *Desired) (ops, deletes []Op, unmana
 	return ops, deletes, unmanaged, errs
 }
 
-func declaredIn(want *Desired, snap *Snapshot, kind, key string) bool {
+func declaredIn(want *Desired, kind, key string) bool {
 	k := KindByName(kind)
 	for _, d := range want.Objects[kind] {
 		if k.Key(d) == key {
@@ -210,12 +220,12 @@ func declaredIn(want *Desired, snap *Snapshot, kind, key string) bool {
 	return false
 }
 
-// compareView removes keys that do not take part in comparison: secrets and
-// desired-only keys other than the parent reference.
+// compareView removes keys that do not take part in comparison: secrets,
+// create-only keys and desired-only keys other than the parent reference.
 func compareView(k *Kind, d Doc) Doc {
 	out := deepCopy(d).(map[string]any)
-	for _, key := range k.DesiredOnly {
-		if key != "network" {
+	for _, key := range append(append([]string(nil), k.DesiredOnly...), k.CreateOnly...) {
+		if key != k.ParentField {
 			delete(out, key)
 		}
 	}
@@ -364,9 +374,9 @@ func checkRefs(snap *Snapshot, want *Desired) error {
 				return name, nil
 			})
 			if k.Parent != "" {
-				parent := str(d["network"])
+				parent := str(d[k.ParentField])
 				if !declaredNames[k.Parent][parent] && len(snap.nameIDs[k.Parent][parent]) != 1 {
-					errs = append(errs, fmt.Sprintf("%s %q: unknown network %q", k.Name, k.Key(d), parent))
+					errs = append(errs, fmt.Sprintf("%s %q: unknown %s %q", k.Name, k.Key(d), k.ParentField, parent))
 				}
 			}
 		}

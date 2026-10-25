@@ -23,6 +23,8 @@ var responseTypes = map[string]reflect.Type{
 	"services":          reflect.TypeFor[api.Service](),
 	"peers":             reflect.TypeFor[api.Peer](),
 	"users":             reflect.TypeFor[api.User](),
+	"service_users":     reflect.TypeFor[api.User](),
+	"tokens":            reflect.TypeFor[api.PersonalAccessToken](),
 	"account":           reflect.TypeFor[api.Account](),
 }
 

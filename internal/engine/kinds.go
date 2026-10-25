@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/netbirdio/netbird/shared/management/http/api"
 )
@@ -26,19 +27,32 @@ type Secret struct {
 	Key       string
 }
 
+// Sink describes a secret the server returns once, at creation; it is handed
+// to the object's "sink" command and never stored.
+type Sink struct {
+	Secret string // response path of the secret
+	ID     string // response path of the new object's ID
+}
+
 // Kind describes one kind of NetBird object.
 type Kind struct {
 	Name      string
 	Singleton bool
-	Parent    string // kind of the parent object (child objects live under it)
+	// Child kinds live under an object of kind Parent. Desired documents name
+	// the parent in ParentField; the Nix module nests them under ChildField.
+	Parent      string
+	ParentField string
+	ChildField  string
 	// ReqType is the update request type; live documents are projected onto it.
 	ReqType reflect.Type
 	Refs    []Ref
 	Secrets []Secret
 	// Immutable fields cannot be updated: a change replaces the object.
 	Immutable []string
-	// DesiredOnly keys exist in desired documents but are never sent.
+	// DesiredOnly keys exist in desired documents but are never sent or compared.
 	DesiredOnly []string
+	// CreateOnly keys are sent when creating and never compared.
+	CreateOnly []string
 	// Hidden fields cannot be declared (server-managed or read-only); import skips them.
 	Hidden []string
 	// Collection returns the list/create path; Item the update/delete path.
@@ -46,23 +60,26 @@ type Kind struct {
 	Item       func(parentID, id string) string
 	// Transform turns a live response document into request shape before projection.
 	Transform func(raw Doc) Doc
-	// Key identifies an object (in named form, including the "network" field
-	// for child kinds).
+	// Key identifies an object (in named form, including ParentField).
 	Key func(d Doc) string
-	// Protected objects are never deleted by pruning.
-	Protected func(raw Doc) bool
+	// Protected objects are never deleted by pruning. parent is the raw parent
+	// object for child kinds.
+	Protected func(raw, parent Doc) bool
 	// Risky returns reasons a change from old to new needs --allow-risky.
 	Risky func(old, new Doc) []string
 	// Check returns reasons an update from old to new cannot be made at all
 	// (the server would refuse it); they fail the plan.
 	Check func(raw, old, new Doc) []string
+	// Renew returns a reason to replace an otherwise unchanged object.
+	Renew func(raw, want Doc) string
 	// CreateBody and UpdateBody build request bodies from a named document.
 	CreateBody func(d Doc) Doc
 	UpdateBody func(d Doc) Doc
+	Sink       *Sink
 	// Skip drops live objects that this kind does not cover.
 	Skip func(raw Doc) bool
 	// Keep copies identifying response fields that the request type lacks
-	// into named documents. They are never sent.
+	// into named documents.
 	Keep     []string
 	NoCreate bool
 	NoDelete bool
@@ -77,7 +94,9 @@ func item(p string) func(string, string) string {
 
 func nameKey(d Doc) string { return str(d["name"]) }
 
-func childKey(d Doc) string { return str(d["network"]) + "/" + str(d["name"]) }
+func childKey(field string) func(Doc) string {
+	return func(d Doc) string { return str(d[field]) + "/" + str(d["name"]) }
+}
 
 func routerKey(d Doc) string {
 	target := str(d["peer"])
@@ -134,6 +153,45 @@ func changed(old, new Doc, path string) bool { return !equalJSON(get(old, path),
 
 func boolAt(d Doc, path string) bool { b, _ := get(d, path).(bool); return b }
 
+func isCurrent(raw Doc) bool { b, _ := raw["is_current"].(bool); return b }
+
+func isServiceUser(raw Doc) bool { b, _ := raw["is_service_user"].(bool); return b }
+
+// userCheck lists user updates the server refuses (validateUserUpdate).
+func userCheck(raw, old, new Doc) []string {
+	var errs []string
+	roleOrBlock := changed(old, new, "role") || changed(old, new, "is_blocked")
+	if isCurrent(raw) && roleOrBlock {
+		errs = append(errs, "the API token belongs to this user; the server refuses changes to its own role or blocked state")
+	}
+	if str(raw["role"]) == "owner" && roleOrBlock {
+		errs = append(errs, "the owner's role and blocked state can only be changed by the owner (dashboard)")
+	}
+	if str(raw["role"]) != "owner" && str(new["role"]) == "owner" {
+		errs = append(errs, "only the owner can transfer ownership (dashboard); leave role undeclared until then")
+	}
+	for _, g := range listOf(get(new, "auto_groups")) {
+		if g == "All" {
+			errs = append(errs, "the All group cannot be assigned to users")
+		}
+	}
+	return errs
+}
+
+func userRisky(old, new Doc) []string {
+	var r []string
+	if changed(old, new, "role") {
+		r = append(r, fmt.Sprintf("changes the role from %s to %s", str(old["role"]), str(new["role"])))
+	}
+	if !boolAt(old, "is_blocked") && boolAt(new, "is_blocked") {
+		r = append(r, "blocks the user")
+	}
+	if removed := setMinus(get(old, "auto_groups"), get(new, "auto_groups")); len(removed) > 0 {
+		r = append(r, "removes groups from the user and their peers: "+strings.Join(removed, ", "))
+	}
+	return r
+}
+
 // Kinds lists every managed kind in apply order: an object is created or
 // updated after everything it can reference. Deletes run in reverse order.
 var Kinds = []*Kind{
@@ -156,7 +214,7 @@ var Kinds = []*Kind{
 			return raw
 		},
 		Key: nameKey,
-		Protected: func(raw Doc) bool {
+		Protected: func(raw, _ Doc) bool {
 			issued := str(raw["issued"])
 			return str(raw["name"]) == "All" || (issued != "" && issued != "api")
 		},
@@ -178,6 +236,8 @@ var Kinds = []*Kind{
 	{
 		Name:        "network_resources",
 		Parent:      "networks",
+		ParentField: "network",
+		ChildField:  "resources",
 		ReqType:     reflect.TypeFor[api.NetworkResourceRequest](),
 		Collection:  func(p string) string { return "/networks/" + p + "/resources" },
 		Item:        func(p, id string) string { return "/networks/" + p + "/resources/" + id },
@@ -187,11 +247,13 @@ var Kinds = []*Kind{
 			raw["groups"] = idsOf(raw["groups"])
 			return raw
 		},
-		Key: childKey,
+		Key: childKey("network"),
 	},
 	{
 		Name:        "network_routers",
 		Parent:      "networks",
+		ParentField: "network",
+		ChildField:  "routers",
 		ReqType:     reflect.TypeFor[api.NetworkRouterRequest](),
 		Collection:  func(p string) string { return "/networks/" + p + "/routers" },
 		Item:        func(p, id string) string { return "/networks/" + p + "/routers/" + id },
@@ -244,19 +306,20 @@ var Kinds = []*Kind{
 			return raw
 		},
 		Key: nameKey,
-		Protected: func(raw Doc) bool {
+		Protected: func(raw, _ Doc) bool {
 			return strings.HasPrefix(str(raw["name"]), "Temporary access policy for peer ")
 		},
 	},
 	{
-		Name:       "setup_keys",
-		ReqType:    reflect.TypeFor[setupKeyDoc](),
-		Collection: collection("/setup-keys"),
-		Item:       item("/setup-keys"),
-		Refs:       []Ref{{Path: "auto_groups[]", Kind: "groups"}},
-		Immutable:  []string{"type", "usage_limit", "ephemeral", "allow_extra_dns_labels"},
-		// expires_in only applies at creation; sink is where the new key goes.
-		DesiredOnly: []string{"sink", "expires_in"},
+		Name:        "setup_keys",
+		ReqType:     reflect.TypeFor[setupKeyDoc](),
+		Collection:  collection("/setup-keys"),
+		Item:        item("/setup-keys"),
+		Refs:        []Ref{{Path: "auto_groups[]", Kind: "groups"}},
+		Immutable:   []string{"type", "usage_limit", "ephemeral", "allow_extra_dns_labels"},
+		DesiredOnly: []string{"sink"},
+		CreateOnly:  []string{"expires_in"},
+		Sink:        &Sink{Secret: "key", ID: "id"},
 		Key:         nameKey,
 		Risky: func(old, new Doc) []string {
 			if !boolAt(old, "revoked") && boolAt(new, "revoked") {
@@ -265,18 +328,8 @@ var Kinds = []*Kind{
 			return nil
 		},
 		CreateBody: func(d Doc) Doc {
-			body := Doc{}
-			for _, k := range []string{"name", "type", "expires_in", "auto_groups", "usage_limit", "ephemeral", "allow_extra_dns_labels"} {
-				if v, ok := d[k]; ok {
-					body[k] = v
-				}
-			}
-			if _, ok := body["expires_in"]; !ok {
-				body["expires_in"] = 0
-			}
-			if _, ok := body["auto_groups"]; !ok {
-				body["auto_groups"] = []any{}
-			}
+			body := pick(d, "name", "type", "expires_in", "auto_groups", "usage_limit", "ephemeral", "allow_extra_dns_labels")
+			defaults(body, Doc{"expires_in": 0, "auto_groups": []any{}})
 			return body
 		},
 		UpdateBody: func(d Doc) Doc {
@@ -325,7 +378,7 @@ var Kinds = []*Kind{
 		},
 	},
 	{
-		// Human users, adopted after their first login. Service users are not covered.
+		// Human users, adopted after their first login.
 		Name:        "users",
 		ReqType:     reflect.TypeFor[api.UserRequest](),
 		Collection:  collection("/users"),
@@ -333,41 +386,64 @@ var Kinds = []*Kind{
 		Refs:        []Ref{{Path: "auto_groups[]", Kind: "groups"}},
 		Keep:        []string{"email"},
 		DesiredOnly: []string{"email"},
-		Skip:        func(raw Doc) bool { b, _ := raw["is_service_user"].(bool); return b },
+		Skip:        isServiceUser,
 		Key:         func(d Doc) string { return strings.ToLower(str(d["email"])) },
 		NoCreate:    true,
 		NoDelete:    true,
-		Check: func(raw, old, new Doc) []string {
-			var errs []string
-			roleOrBlock := changed(old, new, "role") || changed(old, new, "is_blocked")
-			if b, _ := raw["is_current"].(bool); b && roleOrBlock {
-				errs = append(errs, "the API token belongs to this user; the server refuses changes to its own role or blocked state")
-			}
-			if str(raw["role"]) == "owner" && roleOrBlock {
-				errs = append(errs, "the owner's role and blocked state can only be changed by the owner (dashboard)")
-			}
-			if str(raw["role"]) != "owner" && str(new["role"]) == "owner" {
-				errs = append(errs, "only the owner can transfer ownership (dashboard); leave role undeclared until then")
-			}
-			for _, g := range listOf(get(new, "auto_groups")) {
-				if g == "All" {
-					errs = append(errs, "the All group cannot be assigned to users")
-				}
-			}
-			return errs
+		Check:       userCheck,
+		Risky:       userRisky,
+	},
+	{
+		Name:       "service_users",
+		ReqType:    reflect.TypeFor[api.UserRequest](),
+		Collection: collection("/users"),
+		Item:       item("/users"),
+		Refs:       []Ref{{Path: "auto_groups[]", Kind: "groups"}},
+		Keep:       []string{"name"},
+		CreateOnly: []string{"name"},
+		Skip:       func(raw Doc) bool { return !isServiceUser(raw) },
+		Key:        nameKey,
+		Check:      userCheck,
+		Risky:      userRisky,
+		Protected:  func(raw, _ Doc) bool { return isCurrent(raw) },
+		CreateBody: func(d Doc) Doc {
+			body := pick(d, "name", "role", "auto_groups")
+			defaults(body, Doc{"role": "user", "auto_groups": []any{}})
+			body["is_service_user"] = true
+			return body
 		},
-		Risky: func(old, new Doc) []string {
-			var r []string
-			if changed(old, new, "role") {
-				r = append(r, fmt.Sprintf("changes the role from %s to %s", str(old["role"]), str(new["role"])))
+	},
+	{
+		Name:        "tokens",
+		Parent:      "service_users",
+		ParentField: "user",
+		ChildField:  "tokens",
+		ReqType:     reflect.TypeFor[tokenDoc](),
+		Collection:  func(p string) string { return "/users/" + p + "/tokens" },
+		Item:        func(p, id string) string { return "/users/" + p + "/tokens/" + id },
+		Keep:        []string{"expiration_date"},
+		DesiredOnly: []string{"user", "sink", "renew_before_days", "expiration_date"},
+		Hidden:      []string{"expiration_date"},
+		CreateOnly:  []string{"expires_in"},
+		Sink:        &Sink{Secret: "plain_token", ID: "personal_access_token.id"},
+		Key:         childKey("user"),
+		// Never prune the tokens of the user nb-nix runs as: that would lock it out.
+		Protected: func(_, parent Doc) bool { return isCurrent(parent) },
+		Renew: func(raw, want Doc) string {
+			exp, err := time.Parse(time.RFC3339, str(raw["expiration_date"]))
+			if err != nil {
+				return ""
 			}
-			if !boolAt(old, "is_blocked") && boolAt(new, "is_blocked") {
-				r = append(r, "blocks the user")
+			days, _ := numberOf(want["renew_before_days"])
+			if time.Until(exp) < time.Duration(days)*24*time.Hour {
+				return "token expires " + exp.Format(time.DateOnly)
 			}
-			if removed := setMinus(get(old, "auto_groups"), get(new, "auto_groups")); len(removed) > 0 {
-				r = append(r, "removes groups from the user and their peers: "+strings.Join(removed, ", "))
-			}
-			return r
+			return ""
+		},
+		CreateBody: func(d Doc) Doc {
+			body := pick(d, "name", "expires_in")
+			defaults(body, Doc{"expires_in": 365})
+			return body
 		},
 	},
 	{
@@ -421,6 +497,12 @@ type setupKeyDoc struct {
 	Revoked             bool     `json:"revoked"`
 }
 
+// tokenDoc is the managed view of a personal access token: tokens cannot be
+// updated, only created (with expires_in) and replaced.
+type tokenDoc struct {
+	Name string `json:"name"`
+}
+
 // KindByName returns the kind with the given name, or nil.
 func KindByName(name string) *Kind {
 	for _, k := range Kinds {
@@ -429,6 +511,24 @@ func KindByName(name string) *Kind {
 		}
 	}
 	return nil
+}
+
+func pick(d Doc, keys ...string) Doc {
+	out := Doc{}
+	for _, k := range keys {
+		if v, ok := d[k]; ok {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+func defaults(d, def Doc) {
+	for k, v := range def {
+		if _, ok := d[k]; !ok {
+			d[k] = v
+		}
+	}
 }
 
 // listOf returns the strings in a JSON list.

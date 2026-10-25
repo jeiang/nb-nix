@@ -95,6 +95,15 @@ in {
       access_restrictions.crowdsec_mode = "enforce";
     };
 
+    service_users.nb-nix = {
+      role = "admin";
+      tokens.main = {
+        expires_in = 365;
+        renew_before_days = 30;
+        sink.command = ["sops" "set" "--value-stdin" "secrets.yaml" ''["netbird"]["api-token"]''];
+      };
+    };
+
     users.alice = {
       email = "alice@example.com";
       role = "user";
