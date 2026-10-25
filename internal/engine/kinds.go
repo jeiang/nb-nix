@@ -378,16 +378,17 @@ var Kinds = []*Kind{
 		},
 	},
 	{
-		// Human users, adopted after their first login.
+		// Human users, adopted after their first login. Matched by user ID,
+		// so configs in public repositories need not contain email addresses.
 		Name:        "users",
 		ReqType:     reflect.TypeFor[api.UserRequest](),
 		Collection:  collection("/users"),
 		Item:        item("/users"),
 		Refs:        []Ref{{Path: "auto_groups[]", Kind: "groups"}},
-		Keep:        []string{"email"},
-		DesiredOnly: []string{"email"},
+		Keep:        []string{"id"},
+		DesiredOnly: []string{"id"},
 		Skip:        isServiceUser,
-		Key:         func(d Doc) string { return strings.ToLower(str(d["email"])) },
+		Key:         func(d Doc) string { return str(d["id"]) },
 		NoCreate:    true,
 		NoDelete:    true,
 		Check:       userCheck,

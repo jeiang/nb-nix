@@ -77,6 +77,8 @@ type Op struct {
 	Body    Doc      `json:"body,omitempty"` // named; may hold *_file secret paths
 	Changes []Change `json:"changes,omitempty"`
 	Risky   []string `json:"risky,omitempty"`
+	// Label is a readable name for objects keyed by an opaque ID (users).
+	Label string `json:"label,omitempty"`
 	// SendSecrets is set when an update must include write-only secrets
 	// (an auth method is being turned on).
 	SendSecrets bool `json:"send_secrets,omitempty"`
@@ -86,6 +88,7 @@ type Op struct {
 type Unmanaged struct {
 	Kind      string `json:"kind"`
 	Key       string `json:"key"`
+	Label     string `json:"label,omitempty"`
 	Protected bool   `json:"protected,omitempty"`
 }
 
@@ -147,8 +150,9 @@ func planKind(k *Kind, snap *Snapshot, want *Desired) (ops, deletes []Op, unmana
 			ops = append(ops, Op{Kind: k.Name, Key: key, Action: "create", Body: d})
 		default:
 			o := matches[0]
+			label := labelOf(k, o)
 			if pending, _ := o.Raw["pending_approval"].(bool); pending && k.Name == "users" {
-				ops = append(ops, Op{Kind: k.Name, Key: key, Action: "approve", LiveID: o.ID, Hash: o.Hash})
+				ops = append(ops, Op{Kind: k.Name, Key: key, Label: label, Action: "approve", LiveID: o.ID, Hash: o.Hash})
 				// Approval unblocks the user; do not block it again unless declared.
 				d = overlay(Doc{"is_blocked": false}, d).(map[string]any)
 			}
@@ -165,6 +169,7 @@ func planKind(k *Kind, snap *Snapshot, want *Desired) (ops, deletes []Op, unmana
 				}
 			}
 			if ok {
+				op.Label = label
 				ops = append(ops, op)
 			}
 		}
@@ -197,7 +202,7 @@ func planKind(k *Kind, snap *Snapshot, want *Desired) (ops, deletes []Op, unmana
 		}
 		for _, o := range live[key] {
 			protected := k.NoDelete || (k.Protected != nil && k.Protected(o.Raw, parents[o.ParentID]))
-			unmanaged = append(unmanaged, Unmanaged{Kind: k.Name, Key: key, Protected: protected})
+			unmanaged = append(unmanaged, Unmanaged{Kind: k.Name, Key: key, Label: labelOf(k, o), Protected: protected})
 			if !want.Prune[k.Name] || protected || deletedParents[o.ParentID] {
 				continue
 			}
@@ -390,12 +395,28 @@ func checkRefs(snap *Snapshot, want *Desired) error {
 
 func quote(s string) string { return fmt.Sprintf("%q", s) }
 
+// labelOf names objects keyed by an opaque ID (users) for plan output.
+func labelOf(k *Kind, o *LiveObj) string {
+	if k.Name == "users" {
+		return str(o.Raw["name"])
+	}
+	return ""
+}
+
+// Title is the quoted key, followed by the label when there is one.
+func (op *Op) Title() string {
+	if op.Label != "" {
+		return quote(op.Key) + " (" + op.Label + ")"
+	}
+	return quote(op.Key)
+}
+
 // Risky lists the risky reasons in the plan.
 func (p *Plan) Risky() []string {
 	var out []string
 	for _, op := range p.Ops {
 		for _, r := range op.Risky {
-			out = append(out, fmt.Sprintf("%s %s: %s", op.Kind, quote(op.Key), r))
+			out = append(out, fmt.Sprintf("%s %s: %s", op.Kind, op.Title(), r))
 		}
 	}
 	return out

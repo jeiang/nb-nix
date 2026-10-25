@@ -51,8 +51,7 @@ func Import(w io.Writer, snap *Snapshot, server, version string) error {
 				}
 				attrs(parent, k.ChildField)[childSlugs[sk].slug(key)] = d
 			case k.Name == "users":
-				local, _, _ := strings.Cut(str(d["email"]), "@")
-				attrs(out, k.Name)[slugs.slug(local)] = d
+				attrs(out, k.Name)[slugs.slug(str(o.Raw["name"]))] = d
 			default:
 				attrs(out, k.Name)[slugs.slug(str(d["name"]))] = d
 				if parents[k.Name] == nil {

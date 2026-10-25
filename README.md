@@ -22,7 +22,7 @@ you pass `--ignore-version`.
 | `setup_keys.<k>` | setup keys | name |
 | `services.<k>` | reverse-proxy services | name |
 | `peers.<k>` | existing peers (adopt only; peers cannot be created) | name |
-| `users.<k>` | existing human users: `role`, `auto_groups`, `is_blocked` (adopt only) | email |
+| `users.<k>` | existing human users: `role`, `auto_groups`, `is_blocked` (adopt only) | user ID |
 | `service_users.<k>` with `.tokens.<k>` | service users and their personal access tokens | name; tokens by service user + name |
 
 `<k>` is only a Nix handle; `name` defaults to it. Field names are the NetBird
@@ -73,8 +73,10 @@ are changes), `apply [--allow-risky] [--rotate KIND/NAME]`.
 - **Group members:** leave `peers` unset to keep live membership (setup keys,
   user groups and JWT sync also assign peers). Declaring `peers` makes that
   list exact. Do not declare `peers` on groups you assign through users.
-- **Users** exist only after their first login; declaring an email that has
-  not logged in fails the plan. A user's `auto_groups` are pushed to all of
+- **Users** exist only after their first login and are matched by their
+  NetBird user ID (`import` prints it; plans show the user's name beside it),
+  so a public config need not contain email addresses. Declaring an ID that
+  is not on the server fails the plan. A user's `auto_groups` are pushed to all of
   the user's peers (groups propagation), additions and removals alike. A
   declared user pending approval is approved. nb-nix refuses changes the
   server would reject: the owner's role or blocked state, assigning `owner`,

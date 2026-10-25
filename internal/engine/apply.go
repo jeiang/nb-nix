@@ -39,9 +39,9 @@ func Apply(ctx context.Context, c *nbapi.Client, p *Plan, opts ApplyOptions) err
 	for i := range p.Ops {
 		op := &p.Ops[i]
 		if err := a.do(ctx, op); err != nil {
-			return fmt.Errorf("%s %s %s: %w (%d of %d changes made)", op.Action, op.Kind, quote(op.Key), err, i, len(p.Ops))
+			return fmt.Errorf("%s %s %s: %w (%d of %d changes made)", op.Action, op.Kind, op.Title(), err, i, len(p.Ops))
 		}
-		fmt.Fprintf(opts.Log, "%s %s %s\n", pastTense(op.Action), op.Kind, quote(op.Key))
+		fmt.Fprintf(opts.Log, "%s %s %s\n", pastTense(op.Action), op.Kind, op.Title())
 	}
 	// Old tokens of the user this apply authenticates as go last: deleting one
 	// earlier could revoke the credential the remaining requests use.

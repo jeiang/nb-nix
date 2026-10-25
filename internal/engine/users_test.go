@@ -23,10 +23,10 @@ func userSnapshot(t *testing.T) *Snapshot {
 	})
 }
 
-func TestUserGroupsAreSetByEmailWithNames(t *testing.T) {
+func TestUserGroupsAreSetByIDWithNames(t *testing.T) {
 	s := userSnapshot(t)
-	p := mustPlan(t, s, desired(t, `{"users": [{"email": "a@example.com", "auto_groups": ["vpn_access", "admins"]}]}`))
-	op := opFor(p, "users", "a@example.com")
+	p := mustPlan(t, s, desired(t, `{"users": [{"id": "u-a", "auto_groups": ["vpn_access", "admins"]}]}`))
+	op := opFor(p, "users", "u-a")
 	if op == nil || op.Action != "update" || len(op.Risky) != 0 {
 		t.Fatalf("want one plain update, got %+v", p.Ops)
 	}
@@ -35,8 +35,8 @@ func TestUserGroupsAreSetByEmailWithNames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, sent := body["email"]; sent {
-		t.Error("email must not be sent")
+	if _, sent := body["id"]; sent {
+		t.Error("id must not be sent in the body")
 	}
 	if body["role"] != "user" || body["is_blocked"] != false {
 		t.Errorf("undeclared role/is_blocked not kept: %v", body)
@@ -53,8 +53,8 @@ func TestUserGroupsAreSetByEmailWithNames(t *testing.T) {
 }
 
 func TestUserGroupRemovalIsRisky(t *testing.T) {
-	p := mustPlan(t, userSnapshot(t), desired(t, `{"users": [{"email": "a@example.com", "auto_groups": []}]}`))
-	if op := opFor(p, "users", "a@example.com"); op == nil || len(op.Risky) == 0 {
+	p := mustPlan(t, userSnapshot(t), desired(t, `{"users": [{"id": "u-a", "auto_groups": []}]}`))
+	if op := opFor(p, "users", "u-a"); op == nil || len(op.Risky) == 0 {
 		t.Fatalf("group removal not risky: %+v", op)
 	}
 }
@@ -62,12 +62,12 @@ func TestUserGroupRemovalIsRisky(t *testing.T) {
 func TestUserChangesTheServerRefusesFailThePlan(t *testing.T) {
 	s := userSnapshot(t)
 	cases := map[string]string{
-		"owner role change":        `{"users": [{"email": "owner@example.com", "role": "user"}]}`,
-		"owner blocked":            `{"users": [{"email": "owner@example.com", "is_blocked": true}]}`,
-		"assign owner":             `{"users": [{"email": "a@example.com", "role": "owner"}]}`,
-		"own role change":          `{"users": [{"email": "me@example.com", "role": "user"}]}`,
-		"All group":                `{"users": [{"email": "a@example.com", "auto_groups": ["All"]}]}`,
-		"user who never logged in": `{"users": [{"email": "ghost@example.com"}]}`,
+		"owner role change":        `{"users": [{"id": "u-owner", "role": "user"}]}`,
+		"owner blocked":            `{"users": [{"id": "u-owner", "is_blocked": true}]}`,
+		"assign owner":             `{"users": [{"id": "u-a", "role": "owner"}]}`,
+		"own role change":          `{"users": [{"id": "u-me", "role": "user"}]}`,
+		"All group":                `{"users": [{"id": "u-a", "auto_groups": ["All"]}]}`,
+		"user who never logged in": `{"users": [{"id": "u-ghost"}]}`,
 	}
 	for name, src := range cases {
 		if _, err := MakePlan(s, desired(t, src)); err == nil {
@@ -76,14 +76,14 @@ func TestUserChangesTheServerRefusesFailThePlan(t *testing.T) {
 	}
 	// The owner's groups can be managed (the server allows admins to), and a
 	// matching role declaration is fine.
-	p := mustPlan(t, s, desired(t, `{"users": [{"email": "owner@example.com", "role": "owner", "auto_groups": ["admins", "vpn_access"]}]}`))
-	if op := opFor(p, "users", "owner@example.com"); op == nil || op.Action != "update" {
+	p := mustPlan(t, s, desired(t, `{"users": [{"id": "u-owner", "role": "owner", "auto_groups": ["admins", "vpn_access"]}]}`))
+	if op := opFor(p, "users", "u-owner"); op == nil || op.Action != "update" {
 		t.Fatalf("want owner groups update, got %+v", p.Ops)
 	}
 }
 
 func TestPendingUserIsApprovedThenUpdated(t *testing.T) {
-	p := mustPlan(t, userSnapshot(t), desired(t, `{"users": [{"email": "new@example.com", "auto_groups": ["vpn_access"]}]}`))
+	p := mustPlan(t, userSnapshot(t), desired(t, `{"users": [{"id": "u-new", "auto_groups": ["vpn_access"]}]}`))
 	if len(p.Ops) != 2 || p.Ops[0].Action != "approve" || p.Ops[1].Action != "update" {
 		t.Fatalf("want approve then update, got %+v", p.Ops)
 	}

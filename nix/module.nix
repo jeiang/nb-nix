@@ -125,9 +125,9 @@ in {
       type = t.attrsOf (t.submodule [
         gen.UserRequest
         {
-          options.email = lib.mkOption {
+          options.id = lib.mkOption {
             type = t.str;
-            description = "Email of an existing (logged-in) user; identifies the user.";
+            description = "NetBird user ID of an existing (logged-in) user; identifies the user. `nb-nix import` prints it.";
           };
         }
       ]);

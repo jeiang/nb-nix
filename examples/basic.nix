@@ -105,7 +105,7 @@ in {
     };
 
     users.alice = {
-      email = "alice@example.com";
+      id = "CiRhbGljZQ"; # NetBird user ID, from `nb-nix import`
       role = "user";
       auto_groups = [nb.groups.admins.name];
     };

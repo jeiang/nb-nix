@@ -13,7 +13,7 @@ var actionMark = map[string]string{"create": "+", "update": "~", "replace": "-/+
 // Render writes a readable plan. Secret file paths are shown, never values.
 func (p *Plan) Render(w io.Writer) {
 	for _, op := range p.Ops {
-		fmt.Fprintf(w, "%s %s %s %s\n", actionMark[op.Action], op.Action, op.Kind, quote(op.Key))
+		fmt.Fprintf(w, "%s %s %s %s\n", actionMark[op.Action], op.Action, op.Kind, op.Title())
 		switch op.Action {
 		case "create":
 			b, _ := json.MarshalIndent(op.Body, "      ", "  ")
@@ -30,7 +30,7 @@ func (p *Plan) Render(w io.Writer) {
 	if len(p.Unmanaged) > 0 {
 		byKind := map[string][]string{}
 		for _, u := range p.Unmanaged {
-			label := quote(u.Key)
+			label := (&Op{Key: u.Key, Label: u.Label}).Title()
 			if u.Protected {
 				label += " (protected)"
 			}
