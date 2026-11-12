@@ -107,7 +107,7 @@
 
     devShells = forAllSystems (pkgs: {
       default = pkgs.mkShell {
-        packages = [pkgs.go pkgs.gopls pkgs.just pkgs.jq];
+        packages = [pkgs.go pkgs.gopls pkgs.nixd pkgs.bash-language-server pkgs.just pkgs.jq];
         env.GOTOOLCHAIN = "local";
       };
     });
