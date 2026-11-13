@@ -69,10 +69,11 @@
       # used by `just server-test` and the VM integration test.
       netbird-server = netbirdComponent "combined";
       netbird-client = netbirdComponent "client";
-      example-desired = (self.lib.evalConfig {
-        inherit pkgs;
-        modules = [./examples/basic.nix];
-      }).config.netbird.desiredFile;
+      example-desired =
+        (self.lib.evalConfig {
+          inherit pkgs;
+          modules = [./examples/basic.nix];
+        }).config.netbird.desiredFile;
     });
 
     checks = forAllSystems (pkgs: let
