@@ -123,6 +123,19 @@ func TestPlanMatchingStateHasNoChanges(t *testing.T) {
 	}
 }
 
+func TestPlanIgnoresRulePortOrder(t *testing.T) {
+	s := snapshot(t, map[string]string{
+		"groups": `[{"id": "g1", "name": "admins", "issued": "api", "peers": [], "resources": []}]`,
+		"policies": `[{"id": "pol1", "name": "ssh", "description": "", "enabled": true, "source_posture_checks": [],
+			"rules": [{"id": "pol1", "name": "ssh", "enabled": true, "action": "accept", "bidirectional": false, "protocol": "tcp", "ports": ["2222", "22"],
+				"sources": [{"id": "g1", "name": "admins"}], "destinations": [{"id": "g1", "name": "admins"}]}]}]`,
+	})
+	p := mustPlan(t, s, desired(t, `{"policies": [{"name": "ssh", "rules": [{"ports": ["22", "2222"]}]}]}`))
+	if len(p.Ops) != 0 {
+		t.Fatalf("want no ops, got %+v", p.Ops)
+	}
+}
+
 func TestUpdateKeepsUndeclaredFieldsAndResolvesNames(t *testing.T) {
 	s := liveSnapshot(t)
 	p := mustPlan(t, s, desired(t, `{"policies": [{"name": "ssh", "rules": [{"ports": ["22", "2222"]}]}]}`))
