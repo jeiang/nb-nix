@@ -46,7 +46,10 @@ type Kind struct {
 	// ReqType is the update request type; live documents are projected onto it.
 	ReqType reflect.Type
 	Refs    []Ref
-	Secrets []Secret
+	// Unordered lists (paths ending in "[]") hold values the server treats as
+	// a set and returns in its own order; they compare regardless of order.
+	Unordered []string
+	Secrets   []Secret
 	// Immutable fields cannot be updated: a change replaces the object.
 	Immutable []string
 	// DesiredOnly keys exist in desired documents but are never sent or compared.
@@ -297,6 +300,7 @@ var Kinds = []*Kind{
 			{Path: "rules[].sourceResource.id", KindFrom: resourceKind},
 			{Path: "rules[].destinationResource.id", KindFrom: resourceKind},
 		},
+		Unordered: []string{"rules[].ports[]"},
 		Transform: func(raw Doc) Doc {
 			if rules, ok := raw["rules"].([]any); ok {
 				for _, r := range rules {

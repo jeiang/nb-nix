@@ -184,7 +184,7 @@ func mapRefs(k *Kind, d Doc, fn func(kind, v string) (string, error)) (Doc, erro
 	return cur.(map[string]any), nil
 }
 
-// canon sorts every unordered list (reference lists) in d.
+// canon sorts every unordered list (reference lists and Unordered) in d.
 func canon(k *Kind, d Doc) Doc {
 	var cur any = d
 	for _, r := range k.Refs {
@@ -192,6 +192,9 @@ func canon(k *Kind, d Doc) Doc {
 		if len(segs) > 0 && segs[len(segs)-1] == "[]" {
 			cur = sortAt(cur, segs)
 		}
+	}
+	for _, p := range k.Unordered {
+		cur = sortAt(cur, parsePath(p))
 	}
 	m, _ := cur.(map[string]any)
 	return m
